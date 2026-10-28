@@ -171,7 +171,10 @@ class DeepgramTTSOptionsFlowHandler(config_entries.OptionsFlow):
         # Obtener modelos para mostrar idiomas base únicos
         session = async_create_clientsession(self.hass)
         models_client = DeepgramModelsClient(session)
-        models_data = await models_client.fetch_models()
+        try:
+            models_data = await models_client.fetch_models()
+        except Exception:
+            models_data = {}
         languages = set()
         for model in models_data.get("tts", []):
             for lang in model.get("languages", []):
@@ -179,14 +182,22 @@ class DeepgramTTSOptionsFlowHandler(config_entries.OptionsFlow):
                 languages.add(base)
         language_options = sorted(languages)
 
-        if user_input is not None and "language" in user_input:
-            # Guardar idioma seleccionado y pasar al siguiente paso
-            self._selected_language = user_input["language"]
+        if user_input is not None and ("language" in user_input or user_input.get("custom_language")):
+            # Un código de idioma manual tiene prioridad sobre el desplegable
+            custom = (user_input.get("custom_language") or "").strip()
+            if custom:
+                self._selected_language = custom
+            else:
+                self._selected_language = user_input["language"]
             return await self.async_step_voice()
 
         data_schema = vol.Schema(
             {
                 vol.Required("language", default=current_language.split("_")[0] if "_" in current_language else current_language): vol.In(language_options),
+                vol.Optional(
+                    "custom_language",
+                    description={"suggested_value": ""},
+                ): selector.TextSelector(),
             }
         )
 
@@ -206,31 +217,45 @@ class DeepgramTTSOptionsFlowHandler(config_entries.OptionsFlow):
         # Obtener modelos para mostrar voces del idioma base seleccionado
         session = async_create_clientsession(self.hass)
         models_client = DeepgramModelsClient(session)
-        models_data = await models_client.fetch_models()
+        try:
+            models_data = await models_client.fetch_models()
+        except Exception:
+            models_data = {}
         voices = []
         def matches(lang_code):
             return lang_code.split("_")[0] == selected_language
         for model in models_data.get("tts", []):
             if any(matches(lang) for lang in model.get("languages", [])):
                 voices.append((model["canonical_name"], model["name"]))
+        if not voices:
+            # Idioma manual no presente en /v1/models: ofrecer todas las voces
+            for model in models_data.get("tts", []):
+                voices.append((model["canonical_name"], model["name"]))
         voice_options = sorted(voices, key=lambda x: x[1])
 
         # Valor actual o por defecto
         current_voice = self.config_entry.options.get("voice", self.config_entry.data.get("voice", voice_options[0][0] if voice_options else ""))
 
-        if user_input is not None and "voice" in user_input:
+        if user_input is not None and ("voice" in user_input or user_input.get("custom_voice")):
+            # Un nombre de voz manual tiene prioridad sobre el desplegable
+            custom_voice = (user_input.get("custom_voice") or "").strip()
+            selected_voice = custom_voice or user_input["voice"]
             # Guardar idioma y voz seleccionados
             return self.async_create_entry(
                 title="",
                 data={
                     "language": selected_language,
-                    "voice": user_input["voice"],
+                    "voice": selected_voice,
                 },
             )
 
         data_schema = vol.Schema(
             {
                 vol.Required("voice", default=current_voice): vol.In([v[0] for v in voice_options]),
+                vol.Optional(
+                    "custom_voice",
+                    description={"suggested_value": ""},
+                ): selector.TextSelector(),
             }
         )
 

@@ -73,6 +73,10 @@ class DeepgramTtsEntity(TextToSpeechEntity):
             for lang in model.get("languages", []):
                 base = lang.split("_")[0]
                 languages.add(base)
+        # Incluir el idioma configurado aunque no aparezca en /v1/models
+        # (p. ej. códigos manuales como "ru" o "multi")
+        if self.default_language:
+            languages.add(self.default_language.split("_")[0])
         return sorted(languages) if languages else [self.default_language]
 
     @property
